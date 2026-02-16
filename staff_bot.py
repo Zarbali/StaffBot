@@ -189,15 +189,23 @@ class MainControlView(View):
         
     @discord.ui.button(label="📝 Вписать бойца", style=discord.ButtonStyle.primary, custom_id="enlist_button")
     async def enlist_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer(ephemeral=True)
         await show_subdivision_selection(interaction, "enlist")
     
     @discord.ui.button(label="🗑️ Выписать бойца", style=discord.ButtonStyle.danger, custom_id="discharge_button")
     async def discharge_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer(ephemeral=True)
         await show_soldier_selection(interaction, "discharge")
     
     @discord.ui.button(label="✏️ Изменить данные", style=discord.ButtonStyle.secondary, custom_id="edit_button")
     async def edit_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer(ephemeral=True)
         await show_soldier_selection(interaction, "edit")
+    
+    @discord.ui.button(label="🗑️ Очистить базу данных", style=discord.ButtonStyle.danger, custom_id="clear_db_button")
+    async def clear_db_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer(ephemeral=True)
+        await confirm_clear_database(interaction)
 
 # ========== ОСНОВНЫЕ ФУНКЦИИ ==========
 async def show_subdivision_selection(interaction: discord.Interaction, action_type: str):
@@ -213,31 +221,31 @@ async def show_subdivision_selection(interaction: discord.Interaction, action_ty
     )
     
     async def callback(interaction_select: discord.Interaction):
+        await interaction_select.response.defer(ephemeral=True)
         selected = select.values[0]
         user_id = interaction_select.user.id
-        
-        # Сохраняем выбор пользователя
-        user_sessions[user_id] = {
-            "action": action_type,
-            "subdivision": selected
-        }
-        
+        user_sessions[user_id] = {"action": action_type, "subdivision": selected}
         if action_type == "enlist":
             await show_squad_selection(interaction_select)
         else:
-            # Для discharge/edit сразу переходим к выбору бойца
-            await interaction_select.response.defer()
             await show_soldier_selection(interaction_select, action_type)
     
     select.callback = callback
     view = View(timeout=60)
     view.add_item(select)
     
-    await interaction.response.send_message(
-        "**Шаг 1 из 4**\nВыберите подразделение:",
-        view=view,
-        ephemeral=True
-    )
+    if interaction.response.is_done():
+        await interaction.followup.send(
+            "**Шаг 1 из 4**\nВыберите подразделение:",
+            view=view,
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            "**Шаг 1 из 4**\nВыберите подразделение:",
+            view=view,
+            ephemeral=True
+        )
 
 async def show_squad_selection(interaction: discord.Interaction):
     """Показывает меню выбора взвода"""
@@ -245,14 +253,16 @@ async def show_squad_selection(interaction: discord.Interaction):
     session = user_sessions.get(user_id)
     
     if not session or "subdivision" not in session:
-        await interaction.response.send_message("❌ Сессия истекла. Начните заново.", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ Сессия истекла. Начните заново.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Сессия истекла. Начните заново.", ephemeral=True)
         return
     
     subdivision = session["subdivision"]
     squads_for_sub = SQUADS.get(subdivision, {})
     
     if not squads_for_sub:
-        # Нет взводов — используем старый поток (звание + должность)
         await show_rank_selection(interaction)
         return
     
@@ -265,6 +275,7 @@ async def show_squad_selection(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
+        await interaction_select.response.defer(ephemeral=True)
         selected = select.values[0]
         user_id = interaction_select.user.id
         
@@ -272,16 +283,16 @@ async def show_squad_selection(interaction: discord.Interaction):
             user_sessions[user_id]["squad"] = selected
             await show_slot_selection(interaction_select)
         else:
-            await interaction_select.response.send_message("❌ Сессия истекла. Начните заново.", ephemeral=True)
+            await interaction_select.followup.send("❌ Сессия истекла. Начните заново.", ephemeral=True)
     
     select.callback = callback
     view = View(timeout=60)
     view.add_item(select)
     
-    await interaction.response.edit_message(
-        content="**Шаг 2 из 4**\nВыберите взвод:",
-        view=view
-    )
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content="**Шаг 2 из 4**\nВыберите взвод:", view=view)
+    else:
+        await interaction.response.edit_message(content="**Шаг 2 из 4**\nВыберите взвод:", view=view)
 
 def get_occupied_slots(data: dict, subdivision: str, squad: str) -> set:
     """Возвращает множество занятых слотов (индексы) во взводе"""
@@ -322,10 +333,10 @@ async def show_slot_selection(interaction: discord.Interaction):
         options.append(discord.SelectOption(label=label[:100], value=str(i)))
     
     if not options:
-        await interaction.response.edit_message(
-            content=f"❌ Во взводе **{squad}** нет свободных слотов!",
-            view=None
-        )
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=f"❌ Во взводе **{squad}** нет свободных слотов!", view=None)
+        else:
+            await interaction.response.edit_message(content=f"❌ Во взводе **{squad}** нет свободных слотов!", view=None)
         return
     
     select = Select(
@@ -337,7 +348,6 @@ async def show_slot_selection(interaction: discord.Interaction):
     async def callback(interaction_select: discord.Interaction):
         slot_idx = int(select.values[0])
         user_id = interaction_select.user.id
-        
         if user_id in user_sessions:
             user_sessions[user_id]["slot_index"] = slot_idx
             slot_data = slots[slot_idx]
@@ -345,16 +355,25 @@ async def show_slot_selection(interaction: discord.Interaction):
             user_sessions[user_id]["position"] = slot_data["role"]
             await show_enlist_form(interaction_select)
         else:
-            await interaction_select.response.send_message("❌ Сессия истекла. Начните заново.", ephemeral=True)
+            if interaction_select.response.is_done():
+                await interaction_select.followup.send("❌ Сессия истекла. Начните заново.", ephemeral=True)
+            else:
+                await interaction_select.response.send_message("❌ Сессия истекла. Начните заново.", ephemeral=True)
     
     select.callback = callback
     view = View(timeout=60)
     view.add_item(select)
     
-    await interaction.response.edit_message(
-        content=f"**Шаг 3 из 4**\nВыберите свободную позицию во взводе **{squad}**:",
-        view=view
-    )
+    if interaction.response.is_done():
+        await interaction.edit_original_response(
+            content=f"**Шаг 3 из 4**\nВыберите свободную позицию во взводе **{squad}**:",
+            view=view
+        )
+    else:
+        await interaction.response.edit_message(
+            content=f"**Шаг 3 из 4**\nВыберите свободную позицию во взводе **{squad}**:",
+            view=view
+        )
 
 async def show_rank_selection(interaction: discord.Interaction):
     """Показывает меню выбора звания (если нет взводов)"""
@@ -367,23 +386,23 @@ async def show_rank_selection(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
+        await interaction_select.response.defer(ephemeral=True)
         selected = select.values[0]
         user_id = interaction_select.user.id
-        
         if user_id in user_sessions:
             user_sessions[user_id]["rank"] = selected
             await show_position_selection(interaction_select)
         else:
-            await interaction_select.response.send_message("❌ Сессия истекла. Начните заново.", ephemeral=True)
+            await interaction_select.followup.send("❌ Сессия истекла. Начните заново.", ephemeral=True)
     
     select.callback = callback
     view = View(timeout=60)
     view.add_item(select)
     
-    await interaction.response.edit_message(
-        content="**Шаг 2 из 4**\nВыберите звание:",
-        view=view
-    )
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content="**Шаг 2 из 4**\nВыберите звание:", view=view)
+    else:
+        await interaction.response.edit_message(content="**Шаг 2 из 4**\nВыберите звание:", view=view)
 
 async def show_position_selection(interaction: discord.Interaction):
     """Показывает меню выбора должности (если нет взводов)"""
@@ -398,21 +417,23 @@ async def show_position_selection(interaction: discord.Interaction):
     async def callback(interaction_select: discord.Interaction):
         selected = select.values[0]
         user_id = interaction_select.user.id
-        
         if user_id in user_sessions:
             user_sessions[user_id]["position"] = selected
             await show_enlist_form(interaction_select)
         else:
-            await interaction_select.response.send_message("❌ Сессия истекла. Начните заново.", ephemeral=True)
+            if interaction_select.response.is_done():
+                await interaction_select.followup.send("❌ Сессия истекла. Начните заново.", ephemeral=True)
+            else:
+                await interaction_select.response.send_message("❌ Сессия истекла. Начните заново.", ephemeral=True)
     
     select.callback = callback
     view = View(timeout=60)
     view.add_item(select)
     
-    await interaction.response.edit_message(
-        content="**Шаг 3 из 4**\nВыберите должность:",
-        view=view
-    )
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content="**Шаг 3 из 4**\nВыберите должность:", view=view)
+    else:
+        await interaction.response.edit_message(content="**Шаг 3 из 4**\nВыберите должность:", view=view)
 
 async def show_enlist_form(interaction: discord.Interaction):
     """Показывает форму для ввода данных бойца"""
@@ -527,14 +548,15 @@ async def show_enlist_form(interaction: discord.Interaction):
 async def show_soldier_selection(interaction: discord.Interaction, action_type: str):
     """Показывает список бойцов для выбора"""
     data = load_data()
-    
-    if not data:
-        await interaction.response.send_message("❌ В штате пока нет бойцев!", ephemeral=True)
-        return
-    
-    # Фильтрация по подразделению, если выбрано
     user_id = interaction.user.id
     session = user_sessions.get(user_id)
+    
+    if not data:
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ В штате пока нет бойцев!", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ В штате пока нет бойцев!", ephemeral=True)
+        return
     
     if session and "subdivision" in session:
         filtered_data = {k: v for k, v in data.items() if v["subdivision"] == session["subdivision"]}
@@ -542,7 +564,10 @@ async def show_soldier_selection(interaction: discord.Interaction, action_type: 
         filtered_data = data
     
     if not filtered_data:
-        await interaction.response.send_message("❌ В этом подразделении нет бойцев!", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ В этом подразделении нет бойцев!", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ В этом подразделении нет бойцев!", ephemeral=True)
         cleanup_user_session(user_id)
         return
     
@@ -564,16 +589,14 @@ async def show_soldier_selection(interaction: discord.Interaction, action_type: 
     )
     
     async def callback(interaction_select: discord.Interaction):
+        await interaction_select.response.defer(ephemeral=True)
         soldier_id = select.values[0]
         soldier_data = data[soldier_id]
-        
         user_id = interaction_select.user.id
         if user_id not in user_sessions:
             user_sessions[user_id] = {}
-        
         user_sessions[user_id]["selected_soldier"] = soldier_id
         user_sessions[user_id]["soldier_data"] = soldier_data
-        
         if action_type == "discharge":
             await confirm_discharge(interaction_select, soldier_data)
         elif action_type == "edit":
@@ -583,22 +606,95 @@ async def show_soldier_selection(interaction: discord.Interaction, action_type: 
     view = View(timeout=60)
     view.add_item(select)
     
-    await interaction.response.send_message(
-        f"**Выберите бойца для {'выписки' if action_type == 'discharge' else 'редактирования'}:**",
-        view=view,
-        ephemeral=True
+    if interaction.response.is_done():
+        await interaction.followup.send(
+            f"**Выберите бойца для {'выписки' if action_type == 'discharge' else 'редактирования'}:**",
+            view=view,
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            f"**Выберите бойца для {'выписки' if action_type == 'discharge' else 'редактирования'}:**",
+            view=view,
+            ephemeral=True
+        )
+
+async def confirm_clear_database(interaction: discord.Interaction):
+    """Подтверждение полной очистки базы данных штатной структуры"""
+    data = load_data()
+    count = len(data)
+    
+    if count == 0:
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ База данных уже пуста.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ База данных уже пуста.", ephemeral=True)
+        return
+    
+    view = View(timeout=60)
+    
+    async def confirm_callback(interaction_confirm: discord.Interaction):
+        await interaction_confirm.response.defer(ephemeral=True)
+        data = load_data()
+        guild = interaction_confirm.guild
+        removed_count = 0
+        
+        for soldier_id, soldier in list(data.items()):
+            try:
+                if guild:
+                    position_role_id = soldier.get("position_role_id")
+                    await remove_roles(
+                        int(soldier["discord_id"]),
+                        soldier["subdivision_role_id"],
+                        soldier["rank_role_id"],
+                        interaction_confirm,
+                        position_role_id
+                    )
+                removed_count += 1
+            except Exception:
+                pass
+        
+        user_sessions.clear()
+        save_data({})
+        await update_staff_display()
+        await log_action(interaction_confirm.user, f"Полностью очистил базу данных ({removed_count} бойцов)")
+        await interaction_confirm.followup.send(
+            f"✅ База данных полностью очищена!\n**Удалено профилей:** {removed_count}",
+            ephemeral=True
+        )
+    
+    async def cancel_callback(interaction_cancel: discord.Interaction):
+        await interaction_cancel.response.send_message("❌ Очистка отменена.", ephemeral=True)
+    
+    confirm_btn = Button(label="✅ Подтвердить очистку", style=discord.ButtonStyle.danger)
+    cancel_btn = Button(label="❌ Отмена", style=discord.ButtonStyle.secondary)
+    confirm_btn.callback = confirm_callback
+    cancel_btn.callback = cancel_callback
+    view.add_item(confirm_btn)
+    view.add_item(cancel_btn)
+    
+    msg = (
+        f"⚠️ **Подтверждение полной очистки базы данных**\n\n"
+        f"Будет удалено **{count}** профилей из штатной структуры.\n"
+        f"Все роли (подразделение, звание, должность) будут сняты с бойцов.\n\n"
+        f"*Это действие нельзя отменить!*"
     )
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, view=view, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, view=view, ephemeral=True)
 
 async def confirm_discharge(interaction: discord.Interaction, soldier_data: dict):
     """Подтверждение выписки бойца"""
     view = View(timeout=60)
     
     async def confirm_callback(interaction_confirm: discord.Interaction):
+        await interaction_confirm.response.defer(ephemeral=True)
         data = load_data()
         soldier_id = f"{soldier_data['subdivision']}_{soldier_data['discord_id']}"
         
         if soldier_id not in data:
-            await interaction_confirm.response.send_message("❌ Боец уже был удален!", ephemeral=True)
+            await interaction_confirm.followup.send("❌ Боец уже был удален!", ephemeral=True)
             return
         
         # Снятие ролей
@@ -621,7 +717,7 @@ async def confirm_discharge(interaction: discord.Interaction, soldier_data: dict
             f"{removal_result}"
         )
         
-        await interaction_confirm.response.send_message(response_msg, ephemeral=True)
+        await interaction_confirm.followup.send(response_msg, ephemeral=True)
         
         # Очистка и обновление
         cleanup_user_session(interaction_confirm.user.id)
@@ -643,28 +739,33 @@ async def confirm_discharge(interaction: discord.Interaction, soldier_data: dict
     view.add_item(confirm_btn)
     view.add_item(cancel_btn)
     
-    await interaction.response.send_message(
+    msg = (
         f"⚠️ **Подтверждение выписки**\n\n"
         f"**Боец:** {get_soldier_mention(soldier_data)}\n"
         f"**Подразделение:** {soldier_data['subdivision']}\n"
         f"**Звание:** {soldier_data['rank']}\n"
         f"**Должность:** {soldier_data['position']}\n\n"
-        f"*Это действие нельзя отменить!*",
-        view=view,
-        ephemeral=True
+        f"*Это действие нельзя отменить!*"
     )
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, view=view, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, view=view, ephemeral=True)
 
 async def show_edit_menu(interaction: discord.Interaction, soldier_data: dict):
     """Меню редактирования бойца"""
     view = View(timeout=60)
     
     async def edit_rank_callback(interaction_btn: discord.Interaction):
+        await interaction_btn.response.defer(ephemeral=True)
         await show_rank_edit(interaction_btn)
     
     async def edit_position_callback(interaction_btn: discord.Interaction):
+        await interaction_btn.response.defer(ephemeral=True)
         await show_position_edit(interaction_btn)
     
     async def edit_squad_callback(interaction_btn: discord.Interaction):
+        await interaction_btn.response.defer(ephemeral=True)
         await show_squad_slot_edit(interaction_btn)
     
     async def cancel_callback(interaction_btn: discord.Interaction):
@@ -696,16 +797,19 @@ async def show_edit_menu(interaction: discord.Interaction, soldier_data: dict):
     if soldier_data.get('squad'):
         slot_num = soldier_data.get('slot_index')
         squad_info = f"\n• Взвод: {soldier_data['squad']}" + (f" (поз. {slot_num + 1})" if slot_num is not None else "")
-    await interaction.response.edit_message(
-        content=f"**Редактирование бойца:**\n\n"
-                f"**Текущие данные:**\n"
-                f"• Боец: {get_soldier_mention(soldier_data)}\n"
-                f"• Звание: {soldier_data['rank']}\n"
-                f"• Должность: {soldier_data['position']}"
-                f"{squad_info}\n\n"
-                f"Выберите что изменить:",
-        view=view
+    content = (
+        f"**Редактирование бойца:**\n\n"
+        f"**Текущие данные:**\n"
+        f"• Боец: {get_soldier_mention(soldier_data)}\n"
+        f"• Звание: {soldier_data['rank']}\n"
+        f"• Должность: {soldier_data['position']}"
+        f"{squad_info}\n\n"
+        f"Выберите что изменить:"
     )
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content=content, view=view)
+    else:
+        await interaction.response.edit_message(content=content, view=view)
 
 async def show_rank_edit(interaction: discord.Interaction):
     """Изменение звания бойца"""
@@ -718,27 +822,27 @@ async def show_rank_edit(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
+        await interaction_select.response.defer(ephemeral=True)
         new_rank = select.values[0]
         user_id = interaction_select.user.id
         
         if user_id not in user_sessions or "selected_soldier" not in user_sessions[user_id]:
-            await interaction_select.response.send_message("❌ Данные не найдены.", ephemeral=True)
+            await interaction_select.followup.send("❌ Данные не найдены.", ephemeral=True)
             return
         
         soldier_id = user_sessions[user_id]["selected_soldier"]
         data = load_data()
         
         if soldier_id not in data:
-            await interaction_select.response.send_message("❌ Боец не найден.", ephemeral=True)
+            await interaction_select.followup.send("❌ Боец не найден.", ephemeral=True)
             cleanup_user_session(user_id)
             return
         
         soldier = data[soldier_id]
         old_rank = soldier["rank"]
         
-        # Проверка на изменение
         if old_rank == new_rank:
-            await interaction_select.response.send_message(
+            await interaction_select.followup.send(
                 f"❌ Звание не изменилось! Боец уже имеет звание: {old_rank}",
                 ephemeral=True
             )
@@ -764,7 +868,7 @@ async def show_rank_edit(interaction: discord.Interaction):
         except Exception as e:
             role_status = f"⚠️ Ошибка обновления ролей: {str(e)}"
         
-        await interaction_select.response.send_message(
+        await interaction_select.followup.send(
             f"✅ Звание изменено!\n"
             f"**Было:** {old_rank}\n"
             f"**Стало:** {new_rank}\n"
@@ -780,10 +884,10 @@ async def show_rank_edit(interaction: discord.Interaction):
     view = View(timeout=60)
     view.add_item(select)
     
-    await interaction.response.edit_message(
-        content="**Выберите новое звание:**",
-        view=view
-    )
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content="**Выберите новое звание:**", view=view)
+    else:
+        await interaction.response.edit_message(content="**Выберите новое звание:**", view=view)
 
 async def show_position_edit(interaction: discord.Interaction):
     """Изменение должности — выбор из списка"""
@@ -791,7 +895,10 @@ async def show_position_edit(interaction: discord.Interaction):
     session = user_sessions.get(user_id)
     
     if not session or "selected_soldier" not in session:
-        await interaction.response.send_message("❌ Данные не найдены.", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ Данные не найдены.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Данные не найдены.", ephemeral=True)
         return
     
     # Добавляем текущую должность, если её нет в списке
@@ -809,18 +916,19 @@ async def show_position_edit(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
+        await interaction_select.response.defer(ephemeral=True)
         new_position = select.values[0]
         user_id = interaction_select.user.id
         
         if user_id not in user_sessions or "selected_soldier" not in user_sessions[user_id]:
-            await interaction_select.response.send_message("❌ Данные не найдены.", ephemeral=True)
+            await interaction_select.followup.send("❌ Данные не найдены.", ephemeral=True)
             return
         
         soldier_id = user_sessions[user_id]["selected_soldier"]
         data = load_data()
         
         if soldier_id not in data:
-            await interaction_select.response.send_message("❌ Боец не найден.", ephemeral=True)
+            await interaction_select.followup.send("❌ Боец не найден.", ephemeral=True)
             cleanup_user_session(user_id)
             return
         
@@ -828,7 +936,7 @@ async def show_position_edit(interaction: discord.Interaction):
         old_position_role_id = data[soldier_id].get("position_role_id")
         
         if old_position == new_position:
-            await interaction_select.response.send_message(
+            await interaction_select.followup.send(
                 f"❌ Должность не изменилась! Уже установлено: {old_position}",
                 ephemeral=True
             )
@@ -856,7 +964,7 @@ async def show_position_edit(interaction: discord.Interaction):
         except Exception:
             pass
         
-        await interaction_select.response.send_message(
+        await interaction_select.followup.send(
             f"✅ Должность изменена!\n"
             f"**Было:** {old_position}\n"
             f"**Стало:** {new_position}",
@@ -871,15 +979,18 @@ async def show_position_edit(interaction: discord.Interaction):
     view = View(timeout=60)
     view.add_item(select)
     
-    await interaction.response.edit_message(
-        content=f"**Редактирование бойца:**\n\n"
-                f"**Текущие данные:**\n"
-                f"• Боец: {get_soldier_mention(session['soldier_data'])}\n"
-                f"• Звание: {session['soldier_data']['rank']}\n"
-                f"• Должность: {session['soldier_data']['position']}\n\n"
-                f"Выберите новую должность:",
-        view=view
+    content = (
+        f"**Редактирование бойца:**\n\n"
+        f"**Текущие данные:**\n"
+        f"• Боец: {get_soldier_mention(session['soldier_data'])}\n"
+        f"• Звание: {session['soldier_data']['rank']}\n"
+        f"• Должность: {session['soldier_data']['position']}\n\n"
+        f"Выберите новую должность:"
     )
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content=content, view=view)
+    else:
+        await interaction.response.edit_message(content=content, view=view)
 
 async def show_squad_slot_edit(interaction: discord.Interaction):
     """Изменение взвода и позиции бойца"""
@@ -887,7 +998,10 @@ async def show_squad_slot_edit(interaction: discord.Interaction):
     session = user_sessions.get(user_id)
     
     if not session or "selected_soldier" not in session:
-        await interaction.response.send_message("❌ Данные не найдены.", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ Данные не найдены.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Данные не найдены.", ephemeral=True)
         return
     
     soldier_data = session["soldier_data"]
@@ -895,7 +1009,10 @@ async def show_squad_slot_edit(interaction: discord.Interaction):
     squads_for_sub = SQUADS.get(subdivision, {})
     
     if not squads_for_sub:
-        await interaction.response.send_message("❌ Нет взводов для этого подразделения.", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ Нет взводов для этого подразделения.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Нет взводов для этого подразделения.", ephemeral=True)
         return
     
     options = [discord.SelectOption(label=name, value=name) for name in squads_for_sub.keys()]
@@ -907,12 +1024,13 @@ async def show_squad_slot_edit(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
+        await interaction_select.response.defer(ephemeral=True)
         squad = select.values[0]
         user_id = interaction_select.user.id
         session = user_sessions.get(user_id)
         
         if not session or "selected_soldier" not in session:
-            await interaction_select.response.send_message("❌ Данные не найдены.", ephemeral=True)
+            await interaction_select.followup.send("❌ Данные не найдены.", ephemeral=True)
             return
         
         soldier_id = session["selected_soldier"]
@@ -920,10 +1038,9 @@ async def show_squad_slot_edit(interaction: discord.Interaction):
         slots = squads_for_sub.get(squad, [])
         data = load_data()
         
-        # Занятые слоты, но текущий боец освобождает свой слот при переводе
         occupied = get_occupied_slots(data, subdivision, squad)
         if soldier_data.get("squad") == squad and soldier_data.get("slot_index") is not None:
-            occupied.discard(soldier_data["slot_index"])  # его слот теперь свободен
+            occupied.discard(soldier_data["slot_index"])
         
         options = []
         for i, slot in enumerate(slots):
@@ -933,24 +1050,25 @@ async def show_squad_slot_edit(interaction: discord.Interaction):
             options.append(discord.SelectOption(label=f"{i + 1}. {slot['role']} ({rank_short})", value=str(i)))
         
         if not options:
-            await interaction_select.response.send_message(f"❌ Во взводе **{squad}** нет свободных слотов!", ephemeral=True)
+            await interaction_select.followup.send(f"❌ Во взводе **{squad}** нет свободных слотов!", ephemeral=True)
             return
         
         slot_select = Select(placeholder="Выберите позицию...", options=options, custom_id="edit_slot_select")
         
         async def slot_callback(interaction_slot: discord.Interaction):
+            await interaction_slot.response.defer(ephemeral=True)
             slot_idx = int(slot_select.values[0])
             user_id = interaction_slot.user.id
             session = user_sessions.get(user_id)
             
             if not session or "selected_soldier" not in session:
-                await interaction_slot.response.send_message("❌ Данные не найдены.", ephemeral=True)
+                await interaction_slot.followup.send("❌ Данные не найдены.", ephemeral=True)
                 return
             
             soldier_id = session["selected_soldier"]
             data = load_data()
             if soldier_id not in data:
-                await interaction_slot.response.send_message("❌ Боец не найден.", ephemeral=True)
+                await interaction_slot.followup.send("❌ Боец не найден.", ephemeral=True)
                 cleanup_user_session(user_id)
                 return
             
@@ -1001,7 +1119,7 @@ async def show_squad_slot_edit(interaction: discord.Interaction):
                 pass
             
             old_pos = f"{old_squad} (поз. {old_slot + 1})" if old_slot is not None else "—"
-            await interaction_slot.response.send_message(
+            await interaction_slot.followup.send(
                 f"✅ Взвод изменён!\n"
                 f"**Было:** {old_pos}\n"
                 f"**Стало:** {squad} (поз. {slot_idx + 1})\n"
@@ -1017,22 +1135,25 @@ async def show_squad_slot_edit(interaction: discord.Interaction):
         slot_view = View(timeout=60)
         slot_view.add_item(slot_select)
         
-        await interaction_select.response.edit_message(
-            content=f"**Выберите позицию во взводе {squad}:**",
-            view=slot_view
-        )
+        if interaction_select.response.is_done():
+            await interaction_select.edit_original_response(content=f"**Выберите позицию во взводе {squad}:**", view=slot_view)
+        else:
+            await interaction_select.response.edit_message(content=f"**Выберите позицию во взводе {squad}:**", view=slot_view)
     
     select.callback = callback
     view = View(timeout=60)
     view.add_item(select)
     
-    await interaction.response.edit_message(
-        content=f"**Редактирование взвода:**\n\n"
-                f"Боец: {get_soldier_mention(soldier_data)}\n"
-                f"Текущий взвод: {soldier_data.get('squad', '—')}\n\n"
-                f"Выберите новый взвод:",
-        view=view
+    content = (
+        f"**Редактирование взвода:**\n\n"
+        f"Боец: {get_soldier_mention(soldier_data)}\n"
+        f"Текущий взвод: {soldier_data.get('squad', '—')}\n\n"
+        f"Выберите новый взвод:"
     )
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content=content, view=view)
+    else:
+        await interaction.response.edit_message(content=content, view=view)
 
 # ========== РАБОТА С РОЛЯМИ ==========
 def get_all_position_role_ids():
@@ -1308,6 +1429,7 @@ async def create_control_panel():
     embed.add_field(name="📝 Вписать бойца", value="Добавить нового бойца в штат", inline=False)
     embed.add_field(name="🗑️ Выписать бойца", value="Удалить бойца из штата", inline=False)
     embed.add_field(name="✏️ Изменить данные", value="Редактировать данные бойца", inline=False)
+    embed.add_field(name="🗑️ Очистить базу", value="Полностью очистить все профили в штатке (с подтверждением)", inline=False)
     embed.add_field(name="📊 Подразделения", value="• 24th STS'\n", inline=False)
     
     view = MainControlView()
@@ -1354,67 +1476,8 @@ async def on_ready():
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
-    """Глобальный обработчик взаимодействий"""
-    if interaction.type == discord.InteractionType.component:
-        custom_id = interaction.data.get("custom_id", "")
-        
-        # Обработка выпадающих списков подразделений
-        if custom_id.endswith("_subdivision"):
-            action_type = custom_id.replace("_subdivision", "")
-            selected = interaction.data["values"][0]
-            
-            user_sessions[interaction.user.id] = {
-                "action": action_type,
-                "subdivision": selected
-            }
-            
-            if action_type == "enlist":
-                await show_squad_selection(interaction)
-            else:
-                await interaction.response.defer()
-                await show_soldier_selection(interaction, action_type)
-        
-        # Обработка выбора взвода
-        elif custom_id == "squad_select":
-            selected = interaction.data["values"][0]
-            user_id = interaction.user.id
-            if user_id in user_sessions:
-                user_sessions[user_id]["squad"] = selected
-                await show_slot_selection(interaction)
-        
-        # Обработка выбора слота во взводе
-        elif custom_id == "slot_select":
-            selected = int(interaction.data["values"][0])
-            user_id = interaction.user.id
-            if user_id in user_sessions:
-                session = user_sessions[user_id]
-                subdivision = session.get("subdivision")
-                squad = session.get("squad")
-                slots = SQUADS.get(subdivision, {}).get(squad, [])
-                if 0 <= selected < len(slots):
-                    slot_data = slots[selected]
-                    user_sessions[user_id]["slot_index"] = selected
-                    user_sessions[user_id]["rank"] = slot_data["rank"]
-                    user_sessions[user_id]["position"] = slot_data["role"]
-                    await show_enlist_form(interaction)
-        
-        # Обработка выпадающих списков званий
-        elif custom_id == "rank_select":
-            selected = interaction.data["values"][0]
-            
-            user_id = interaction.user.id
-            if user_id in user_sessions:
-                user_sessions[user_id]["rank"] = selected
-                await show_position_selection(interaction)
-        
-        # Обработка выпадающих списков должностей
-        elif custom_id == "position_select":
-            selected = interaction.data["values"][0]
-            
-            user_id = interaction.user.id
-            if user_id in user_sessions:
-                user_sessions[user_id]["position"] = selected
-                await show_enlist_form(interaction)
+    """Обработчик взаимодействий (View callbacks обрабатывают селекты — дублирование убрано)"""
+    pass
 
 # ========== ЗАПУСК БОТА ==========
 if __name__ == "__main__":
