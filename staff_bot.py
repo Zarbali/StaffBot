@@ -139,6 +139,18 @@ CONTROL_PANEL_MESSAGE_FILE = "control_panel_message.json"
 # Глобальные переменные
 user_sessions = {}  # Временное хранилище данных пользователя
 
+async def safe_defer(interaction: discord.Interaction, ephemeral: bool = True) -> bool:
+    """Defer. Возвращает False если interaction истёк (напр. cold start Railway)."""
+    try:
+        await interaction.response.defer(ephemeral=ephemeral)
+        return True
+    except discord.errors.NotFound as e:
+        if getattr(e, "code", None) == 10062:
+            print("[WARN] Interaction истёк (10062). Возможен cold start. Повторите действие.")
+        return False
+    except Exception:
+        return False
+
 # Утилиты для работы с файлами
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -189,22 +201,26 @@ class MainControlView(View):
         
     @discord.ui.button(label="📝 Вписать бойца", style=discord.ButtonStyle.primary, custom_id="enlist_button")
     async def enlist_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer(ephemeral=True)
+        if not await safe_defer(interaction):
+            return
         await show_subdivision_selection(interaction, "enlist")
     
     @discord.ui.button(label="🗑️ Выписать бойца", style=discord.ButtonStyle.danger, custom_id="discharge_button")
     async def discharge_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer(ephemeral=True)
+        if not await safe_defer(interaction):
+            return
         await show_soldier_selection(interaction, "discharge")
     
     @discord.ui.button(label="✏️ Изменить данные", style=discord.ButtonStyle.secondary, custom_id="edit_button")
     async def edit_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer(ephemeral=True)
+        if not await safe_defer(interaction):
+            return
         await show_soldier_selection(interaction, "edit")
     
     @discord.ui.button(label="🗑️ Очистить базу данных", style=discord.ButtonStyle.danger, custom_id="clear_db_button")
     async def clear_db_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer(ephemeral=True)
+        if not await safe_defer(interaction):
+            return
         await confirm_clear_database(interaction)
 
 # ========== ОСНОВНЫЕ ФУНКЦИИ ==========
@@ -221,7 +237,8 @@ async def show_subdivision_selection(interaction: discord.Interaction, action_ty
     )
     
     async def callback(interaction_select: discord.Interaction):
-        await interaction_select.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_select):
+            return
         selected = select.values[0]
         user_id = interaction_select.user.id
         user_sessions[user_id] = {"action": action_type, "subdivision": selected}
@@ -275,10 +292,10 @@ async def show_squad_selection(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
-        await interaction_select.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_select):
+            return
         selected = select.values[0]
         user_id = interaction_select.user.id
-        
         if user_id in user_sessions:
             user_sessions[user_id]["squad"] = selected
             await show_slot_selection(interaction_select)
@@ -386,7 +403,8 @@ async def show_rank_selection(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
-        await interaction_select.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_select):
+            return
         selected = select.values[0]
         user_id = interaction_select.user.id
         if user_id in user_sessions:
@@ -589,7 +607,8 @@ async def show_soldier_selection(interaction: discord.Interaction, action_type: 
     )
     
     async def callback(interaction_select: discord.Interaction):
-        await interaction_select.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_select):
+            return
         soldier_id = select.values[0]
         soldier_data = data[soldier_id]
         user_id = interaction_select.user.id
@@ -634,7 +653,8 @@ async def confirm_clear_database(interaction: discord.Interaction):
     view = View(timeout=60)
     
     async def confirm_callback(interaction_confirm: discord.Interaction):
-        await interaction_confirm.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_confirm):
+            return
         data = load_data()
         guild = interaction_confirm.guild
         removed_count = 0
@@ -689,7 +709,8 @@ async def confirm_discharge(interaction: discord.Interaction, soldier_data: dict
     view = View(timeout=60)
     
     async def confirm_callback(interaction_confirm: discord.Interaction):
-        await interaction_confirm.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_confirm):
+            return
         data = load_data()
         soldier_id = f"{soldier_data['subdivision']}_{soldier_data['discord_id']}"
         
@@ -757,15 +778,18 @@ async def show_edit_menu(interaction: discord.Interaction, soldier_data: dict):
     view = View(timeout=60)
     
     async def edit_rank_callback(interaction_btn: discord.Interaction):
-        await interaction_btn.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_btn):
+            return
         await show_rank_edit(interaction_btn)
     
     async def edit_position_callback(interaction_btn: discord.Interaction):
-        await interaction_btn.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_btn):
+            return
         await show_position_edit(interaction_btn)
     
     async def edit_squad_callback(interaction_btn: discord.Interaction):
-        await interaction_btn.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_btn):
+            return
         await show_squad_slot_edit(interaction_btn)
     
     async def cancel_callback(interaction_btn: discord.Interaction):
@@ -822,7 +846,8 @@ async def show_rank_edit(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
-        await interaction_select.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_select):
+            return
         new_rank = select.values[0]
         user_id = interaction_select.user.id
         
@@ -916,7 +941,8 @@ async def show_position_edit(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
-        await interaction_select.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_select):
+            return
         new_position = select.values[0]
         user_id = interaction_select.user.id
         
@@ -1024,7 +1050,8 @@ async def show_squad_slot_edit(interaction: discord.Interaction):
     )
     
     async def callback(interaction_select: discord.Interaction):
-        await interaction_select.response.defer(ephemeral=True)
+        if not await safe_defer(interaction_select):
+            return
         squad = select.values[0]
         user_id = interaction_select.user.id
         session = user_sessions.get(user_id)
@@ -1056,7 +1083,8 @@ async def show_squad_slot_edit(interaction: discord.Interaction):
         slot_select = Select(placeholder="Выберите позицию...", options=options, custom_id="edit_slot_select")
         
         async def slot_callback(interaction_slot: discord.Interaction):
-            await interaction_slot.response.defer(ephemeral=True)
+            if not await safe_defer(interaction_slot):
+                return
             slot_idx = int(slot_select.values[0])
             user_id = interaction_slot.user.id
             session = user_sessions.get(user_id)
