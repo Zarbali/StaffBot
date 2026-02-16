@@ -1,0 +1,14 @@
+# Токен и секреты
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+env/
+
+# Данные бота (опционально - раскомментируйте если не хотите загружать)
+# staff_data.json
+# control_panel_message.json
